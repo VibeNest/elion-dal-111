@@ -17,7 +17,7 @@ import pytest
 from elion_dal.config import get_settings
 from elion_dal.service.bootstrap import build_index_service
 from elion_dal.service.sync import UpsertCounts
-from elion_dal.store.pg_repo import DocInput, sha256
+from elion_dal.store.pg_repo import DocInput, SectionInput, sha256
 
 pytestmark = pytest.mark.integration
 
@@ -46,15 +46,20 @@ def test_roundtrip(index):
         source_id="it_source",
         url="https://bio-olymp.mipt.ru/",
         title="Олимпиада по биологии",
-        text=text,
         lang="ru",
         published_ts=0,
         content_hash=sha256(text),
         index_in_rag=True,
+        sections=[
+            SectionInput(
+                section_id="0", heading_path=[], url="https://bio-olymp.mipt.ru/", text=text
+            )
+        ],
     )
     counts = UpsertCounts()
     index.process_document(doc, counts)
     assert counts.indexed == 1
+    assert counts.parents_upserted == 1
     assert counts.chunks_upserted >= 1
 
     hits = index.search(
@@ -65,7 +70,8 @@ def test_roundtrip(index):
     )
     assert hits, "поиск ничего не вернул"
     assert hits[0].source_id == "it_source"
-    assert "олимпиад" in hits[0].text.lower()
+    assert hits[0].parent_id == "it-bio-1::0"
+    assert "олимпиад" in hits[0].text.lower()  # текст родителя
 
     # очистка
     index.delete_source("it_source")

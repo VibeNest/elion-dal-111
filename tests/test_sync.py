@@ -1,6 +1,7 @@
-"""Тесты оркестрации IndexService на фейках (без Qdrant/Postgres/моделей).
+"""Тесты оркестрации parent-child на фейках (без Qdrant/Postgres/моделей).
 
-Проверяем дедуп по хешу, обработку бланков и переиндексацию.
+Проверяем дедуп по хешу, бланки, переиндексацию, разбиение на родителей и
+схлопывание детей в уникальных родителей на поиске.
 """
 
 from __future__ import annotations
@@ -8,13 +9,15 @@ from __future__ import annotations
 from elion_dal.chunking.chunker import Chunk
 from elion_dal.embedding.base import Embedding, SparseVector
 from elion_dal.service.sync import IndexService, UpsertCounts
-from elion_dal.store.pg_repo import DocInput
+from elion_dal.store.pg_repo import DocInput, ParentRecord, SectionInput
+from elion_dal.store.qdrant_repo import SearchHit
 
 
 class FakePg:
     def __init__(self):
         self.hashes: dict[str, str] = {}
-        self.chunks: dict[str, list] = {}
+        self.docs: dict[str, DocInput] = {}
+        self.parents: dict[str, list] = {}
         self.sources: set[str] = set()
         self.touched: list[str] = []
 
@@ -24,11 +27,29 @@ class FakePg:
     def get_content_hash(self, doc_id):
         return self.hashes.get(doc_id)
 
-    def upsert_document(self, doc: DocInput):
+    def upsert_document(self, doc, raw_text):
         self.hashes[doc.doc_id] = doc.content_hash
+        self.docs[doc.doc_id] = doc
 
-    def replace_chunks(self, doc_id, chunks):
-        self.chunks[doc_id] = list(chunks)
+    def replace_parents_and_chunks(self, doc_id, parents):
+        self.parents[doc_id] = list(parents)
+
+    def get_parents(self, parent_ids):
+        out: dict[str, ParentRecord] = {}
+        for doc_id, plist in self.parents.items():
+            doc = self.docs[doc_id]
+            for p in plist:
+                if p.parent_id in parent_ids:
+                    out[p.parent_id] = ParentRecord(
+                        parent_id=p.parent_id,
+                        doc_id=doc_id,
+                        source_id=doc.source_id,
+                        title=doc.title,
+                        url=p.url,
+                        heading_path=p.heading_path,
+                        text=p.text,
+                    )
+        return out
 
     def touch_source_indexed(self, source_id):
         self.touched.append(source_id)
@@ -41,6 +62,7 @@ class FakeQdrant:
     def __init__(self):
         self.points: dict[str, list] = {}
         self.deleted_docs: list[str] = []
+        self.search_hits: list[SearchHit] = []
 
     def delete_by_doc(self, doc_id):
         self.deleted_docs.append(doc_id)
@@ -48,11 +70,14 @@ class FakeQdrant:
 
     def upsert_chunks(self, points):
         for p in points:
-            self.points.setdefault(p.doc_id, []).append(p)
+            self.points.setdefault(p.payload["doc_id"], []).append(p)
         return len(points)
 
     def delete_by_source(self, source_id):
         pass
+
+    def search(self, embedding, limit, source_ids=(), min_published_ts=0):
+        return self.search_hits[:limit]
 
     def ping(self):
         return True
@@ -77,20 +102,26 @@ class FakeChunker:
 
 
 def make_service():
-    return IndexService(FakePg(), FakeQdrant(), FakeProvider(), FakeChunker())
+    return IndexService(FakePg(), FakeQdrant(), FakeProvider(), FakeChunker(), parent_fanout=5)
 
 
-def doc(text="a|b|c", h="h1", index=True, doc_id="d1"):
+def section(text, sid="0", url="u"):
+    return SectionInput(section_id=sid, heading_path=[], url=url, text=text)
+
+
+def doc(text="a|b|c", h="h1", index=True, doc_id="d1", sections=None):
+    if sections is None:
+        sections = [section(text)]
     return DocInput(
         doc_id=doc_id,
         source_id="s1",
         url="u",
         title="t",
-        text=text,
         lang="ru",
         published_ts=0,
         content_hash=h,
         index_in_rag=index,
+        sections=sections,
     )
 
 
@@ -99,6 +130,7 @@ def test_new_document_indexed():
     counts = UpsertCounts()
     svc.process_document(doc(), counts)
     assert counts.indexed == 1
+    assert counts.parents_upserted == 1
     assert counts.chunks_upserted == 3
     assert svc.qdrant.points["d1"]
 
@@ -118,7 +150,7 @@ def test_changed_document_reindexed():
     svc.process_document(doc(text="a|b", h="v1"), counts)
     svc.process_document(doc(text="a|b|c|d", h="v2"), counts)
     assert counts.indexed == 2
-    assert "d1" in svc.qdrant.deleted_docs  # старые точки удалены перед переиндексацией
+    assert "d1" in svc.qdrant.deleted_docs
     assert len(svc.qdrant.points["d1"]) == 4
 
 
@@ -134,5 +166,40 @@ def test_blank_not_indexed():
 def test_content_hash_autocomputed():
     svc = make_service()
     counts = UpsertCounts()
-    svc.process_document(doc(h=""), counts)  # пустой хеш -> посчитается из текста
-    assert svc.pg.hashes["d1"]  # не пустой
+    svc.process_document(doc(h=""), counts)
+    assert svc.pg.hashes["d1"]
+
+
+def test_multisection_creates_two_parents():
+    svc = make_service()
+    counts = UpsertCounts()
+    sections = [section("a|b", sid="1"), section("c|d|e", sid="2")]
+    svc.process_document(doc(sections=sections), counts)
+    assert counts.parents_upserted == 2
+    assert counts.chunks_upserted == 5  # 2 + 3 детей
+
+
+def test_search_collapses_children_to_parents():
+    svc = make_service()
+    counts = UpsertCounts()
+    sections = [section("a|b", sid="1"), section("c|d", sid="2")]
+    svc.process_document(doc(sections=sections), counts)
+
+    pa, pb = "d1::1", "d1::2"
+    # Дети двух родителей вперемешку; RRF-порядок уже задан списком.
+    svc.qdrant.search_hits = [
+        SearchHit(
+            chunk_id=f"{pb}#0", parent_id=pb, doc_id="d1", source_id="s1", text="c", score=0.9
+        ),
+        SearchHit(
+            chunk_id=f"{pa}#0", parent_id=pa, doc_id="d1", source_id="s1", text="a", score=0.7
+        ),
+        SearchHit(
+            chunk_id=f"{pb}#1", parent_id=pb, doc_id="d1", source_id="s1", text="d", score=0.5
+        ),
+    ]
+    hits = svc.search("q", top_k=2, source_ids=[], min_published_ts=0)
+    assert [h.parent_id for h in hits] == [pb, pa]  # уникальные родители в порядке RRF
+    assert hits[0].score == 0.9
+    assert hits[0].matched_child == "c"  # сниппет ребёнка-победителя
+    assert hits[0].text == "c|d"  # текст родителя (вся секция)

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ..service.bootstrap import build_index_service
 from ..service.sync import UpsertCounts
-from ..store.pg_repo import DocInput, sha256
+from ..store.pg_repo import DocInput, SectionInput, sha256
 from .loaders import load_document
 
 SOURCE_ID = "knowledge_base"
@@ -60,16 +60,19 @@ def main(argv: list[str]) -> int:
             print(f"  [skip] {path.name}: {e}")
             continue
         blank = is_blank(path.name)
+        url = f"file://{path.name}"
+        # У плоских PDF/DOCX нет структуры -> весь документ = один родитель (секция).
+        # Когда ETL начнёт присылать секции из Markdown, здесь появятся реальные parents.
         doc = DocInput(
             doc_id=doc_id_for(path),
             source_id=SOURCE_ID,
-            url=f"file://{path.name}",
+            url=url,
             title=path.stem,
-            text=text,
             lang="ru",
             published_ts=0,
             content_hash=sha256(text),
             index_in_rag=not blank,
+            sections=[SectionInput(section_id="0", heading_path=[], url=url, text=text)],
         )
         index.process_document(doc, counts)
         tag = "BLANK" if blank else f"{len(text)} симв."

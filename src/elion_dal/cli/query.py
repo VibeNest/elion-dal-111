@@ -36,14 +36,19 @@ def main(argv: list[str]) -> int:
         print("Ничего не найдено.")
         return 0
 
+    def clip(s: str, n: int) -> str:
+        s = s.replace("\n", " ").strip()
+        return s[:n] + "…" if len(s) > n else s
+
     print(f"Запрос: {args.query!r}\n")
     for i, h in enumerate(hits, 1):
-        snippet = h.text.replace("\n", " ")
-        if len(snippet) > 300:
-            snippet = snippet[:300] + "…"
+        crumbs = " › ".join(h.heading_path) if h.heading_path else ""
         print(f"#{i}  score={h.score:.4f}  source={h.source_id}")
         print(f"    {h.title}  <{h.url}>")
-        print(f"    {snippet}\n")
+        if crumbs:
+            print(f"    раздел: {crumbs}")
+        print(f"    нашли по: {clip(h.matched_child, 160)}")
+        print(f"    родитель: {clip(h.text, 400)}\n")
     return 0
 
 

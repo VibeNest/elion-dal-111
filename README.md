@@ -1,30 +1,35 @@
 # elion-dal — Векторизация и Хранение (Data Access Layer «Элиона»)
 
-Микросервис Этапа 2 ТЗ: принимает документы (чистый текст + метаданные), внутри
-**чанкует**, **эмбеддит** (BGE-M3: dense + sparse), хранит в **Postgres**
-(source-of-truth) и **Qdrant** (производный индекс), отдаёт результаты
+Микросервис Этапа 2 ТЗ: принимает документы (секции + метаданные), внутри режет
+секции на **дочерние чанки**, **эмбеддит** (BGE-M3: dense + sparse), хранит в
+**Postgres** (source-of-truth) и **Qdrant** (производный индекс), отдаёт результаты
 **гибридного поиска** (dense + sparse, fusion = RRF) по **gRPC**.
 
-Сервис не вызывает LLM и не решает про fallback — он лишь ищет и возвращает чанки
-с источниками и скорами. Confidence/роутинг/карточки — на стороне RAG-ядра.
+**Parent-child retrieval:** поиск идёт по детям (точный матч), но возвращаются
+**родители** — секции документа — для богатого контекста генерации. Сервис не
+вызывает LLM и не решает про fallback; Confidence/роутинг/карточки — на стороне RAG-ядра.
 
 ## Архитектура
 
 ```
-ETL / сидер ──UpsertDocuments──► [chunk → embed(dense+sparse)] ──► Postgres (SoT)
-                                                               └──► Qdrant (index)
-RAG-ядро ──────Search──────────► embed(query) → Qdrant hybrid (RRF) → top-k чанков
+ETL / сидер ──UpsertDocuments──► [секция→родитель; текст→дети; embed(dense+sparse)]
+                                       ├──► Postgres (SoT): documents/parents/chunks
+                                       └──► Qdrant (index): только дети + parent_id
+RAG-ядро ──Search──► embed(query) → Qdrant hybrid (RRF) по детям
+                     → схлопывание в уникальных родителей → top-k родителей
 ```
 
 - **Эмбеддинги за интерфейсом** `EmbeddingProvider` (`src/elion_dal/embedding/`):
-  - `fastembed` — BGE-M3 dense (ONNX, CPU) + BM25 sparse (IDF-модификатор Qdrant);
-  - `flag` — настоящий BGE-M3 dense + learned sparse (вариант A; `pip install -e ".[flag]"`).
+  - `flag` — настоящий BGE-M3 dense + learned sparse (вариант A; `pip install -e ".[flag]"`);
+  - `fastembed` — лёгкий ONNX на CPU: `multilingual-e5-large` dense + BM25 sparse (IDF).
   Выбор — по итогам `bench/benchmark_embeddings.py` (всё на CPU, GPU не нужен).
 - **Qdrant**: коллекция `elion_chunks`, named-векторы `dense`(1024, Cosine) + `sparse`,
-  payload-индексы `source_id` / `doc_id` / `published_ts`. `point_id` детерминирован →
-  идемпотентный upsert.
-- **Postgres**: `sources` / `documents` / `chunks`; дедуп по `content_hash`, полная
-  пересборка индекса без перекраулинга.
+  payload-индексы `source_id` / `doc_id` / `published_ts`. Индексируются **только дети**
+  с `parent_id` в payload. `point_id` детерминирован → идемпотентный upsert.
+- **Postgres**: `sources` / `documents` / `parents` / `chunks`; дедуп по `content_hash`,
+  полная пересборка индекса без перекраулинга. Родители (секции) отдаются на поиске.
+- **Контракт с ETL**: документ несёт `sections[]` (родители) — желательно из Markdown со
+  структурой; документ без секций трактуется как один родитель (fallback `text`).
 
 ## Быстрый старт (локально)
 
@@ -84,7 +89,7 @@ Qdrant-сервере + Postgres, embedded-режим — для dev/CI без D
 | RPC | Назначение |
 |---|---|
 | `UpsertDocuments(stream Document)` | индексация (чанкинг+эмбеддинг внутри, идемпотентно по хешу) |
-| `Search(SearchRequest)` | гибридный поиск (RRF), Топ-k чанков + источники + скоры |
+| `Search(SearchRequest)` | гибридный поиск (RRF) по детям → Топ-k родителей (секций) + matched_child + источники + скоры |
 | `DeleteBySource(SourceRef)` | удалить источник из PG и Qdrant (переиндексация) |
 | `HealthCheck` | живость + доступность Qdrant/Postgres |
 

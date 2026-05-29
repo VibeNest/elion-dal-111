@@ -5,7 +5,7 @@ from __future__ import annotations
 from ..config import Settings
 from ..grpc_gen import vectorstore_pb2 as pb
 from ..grpc_gen import vectorstore_pb2_grpc as pb_grpc
-from ..store.pg_repo import DocInput
+from ..store.pg_repo import DocInput, SectionInput
 from .sync import IndexService, UpsertCounts
 
 
@@ -17,16 +17,30 @@ class VectorStoreServicer(pb_grpc.VectorStoreServicer):
     def UpsertDocuments(self, request_iterator, context) -> pb.UpsertResult:
         counts = UpsertCounts()
         for d in request_iterator:
+            sections = [
+                SectionInput(
+                    section_id=s.section_id,
+                    heading_path=list(s.heading_path),
+                    url=s.url,
+                    text=s.text,
+                    published_ts=s.published_ts,
+                    content_hash=s.content_hash,
+                )
+                for s in d.sections
+            ]
+            # Fallback: документ без секций -> весь текст как один родитель.
+            if not sections and d.text:
+                sections = [SectionInput(section_id="0", heading_path=[], url=d.url, text=d.text)]
             doc = DocInput(
                 doc_id=d.doc_id,
                 source_id=d.source_id or "unknown",
                 url=d.url,
                 title=d.title,
-                text=d.text,
                 lang=d.lang or "ru",
                 published_ts=d.published_ts,
                 content_hash=d.content_hash,
                 index_in_rag=d.index_in_rag,
+                sections=sections,
             )
             self.index.process_document(doc, counts)
         return pb.UpsertResult(
@@ -35,6 +49,7 @@ class VectorStoreServicer(pb_grpc.VectorStoreServicer):
             documents_skipped=counts.skipped,
             documents_blank=counts.blank,
             chunks_upserted=counts.chunks_upserted,
+            parents_upserted=counts.parents_upserted,
         )
 
     def Search(self, request, context) -> pb.SearchResponse:
@@ -48,12 +63,14 @@ class VectorStoreServicer(pb_grpc.VectorStoreServicer):
         return pb.SearchResponse(
             hits=[
                 pb.Hit(
-                    chunk_id=h.chunk_id,
+                    parent_id=h.parent_id,
                     doc_id=h.doc_id,
                     source_id=h.source_id,
                     url=h.url,
                     title=h.title,
+                    heading_path=h.heading_path,
                     text=h.text,
+                    matched_child=h.matched_child,
                     score=h.score,
                 )
                 for h in hits

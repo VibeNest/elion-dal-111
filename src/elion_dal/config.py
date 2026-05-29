@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # Поиск
     search_top_k: int = 3
     search_prefetch: int = 20
+    # Во сколько раз больше детей тянуть, чтобы схлопнуть в top_k уникальных родителей.
+    search_parent_fanout: int = 5
 
 
 @lru_cache

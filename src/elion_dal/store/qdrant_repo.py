@@ -16,7 +16,7 @@ SPARSE = "sparse"
 
 @dataclass(slots=True)
 class PointInput:
-    doc_id: str
+    parent_id: str
     chunk_index: int
     embedding: Embedding
     payload: dict
@@ -24,11 +24,12 @@ class PointInput:
 
 @dataclass(slots=True)
 class SearchHit:
+    """Дочернее попадание. sync схлопывает их в уникальных родителей."""
+
     chunk_id: str
+    parent_id: str
     doc_id: str
     source_id: str
-    url: str
-    title: str
     text: str
     score: float
 
@@ -99,7 +100,7 @@ class QdrantRepo:
     def upsert_chunks(self, points: Sequence[PointInput]) -> int:
         structs = [
             models.PointStruct(
-                id=point_id(p.doc_id, p.chunk_index),
+                id=point_id(p.parent_id, p.chunk_index),
                 vector={
                     DENSE: p.embedding.dense,
                     SPARSE: models.SparseVector(
@@ -158,10 +159,12 @@ class QdrantRepo:
     def search(
         self,
         query: Embedding,
-        top_k: int,
+        limit: int,
         source_ids: Sequence[str] = (),
         min_published_ts: int = 0,
     ) -> list[SearchHit]:
+        """Гибридный поиск по детям. `limit` — сколько дочерних попаданий вернуть
+        (sync схлопнёт их в уникальных родителей)."""
         qfilter = self._filter(source_ids, min_published_ts)
         result = self.client.query_points(
             collection_name=self.collection,
@@ -179,7 +182,7 @@ class QdrantRepo:
                 ),
             ],
             query=models.FusionQuery(fusion=models.Fusion.RRF),
-            limit=top_k,
+            limit=limit,
             with_payload=True,
         )
         hits: list[SearchHit] = []
@@ -188,10 +191,9 @@ class QdrantRepo:
             hits.append(
                 SearchHit(
                     chunk_id=str(payload.get("chunk_id", "")),
+                    parent_id=str(payload.get("parent_id", "")),
                     doc_id=str(payload.get("doc_id", "")),
                     source_id=str(payload.get("source_id", "")),
-                    url=str(payload.get("url", "")),
-                    title=str(payload.get("title", "")),
                     text=str(payload.get("text", "")),
                     score=float(p.score),
                 )

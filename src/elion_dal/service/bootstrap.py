@@ -33,4 +33,4 @@ def build_index_service(settings: Settings | None = None, ensure: bool = True) -
     )
     if ensure:
         qdrant.ensure_collection()
-    return IndexService(pg, qdrant, provider, chunker)
+    return IndexService(pg, qdrant, provider, chunker, parent_fanout=settings.search_parent_fanout)

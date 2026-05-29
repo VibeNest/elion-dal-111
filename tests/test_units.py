@@ -6,18 +6,24 @@ import pytest
 
 from elion_dal.config import Settings
 from elion_dal.embedding.factory import build_provider
-from elion_dal.store.models import chunk_id, point_id
+from elion_dal.store.models import chunk_id, parent_pk, point_id
 from elion_dal.store.pg_repo import sha256
 
 
+def test_parent_pk_format():
+    assert parent_pk("doc-1", "4.9") == "doc-1::4.9"
+
+
 def test_chunk_id_format():
-    assert chunk_id("doc-1", 3) == "doc-1:3"
+    pid = parent_pk("doc-1", "0")
+    assert chunk_id(pid, 3) == "doc-1::0#3"
 
 
 def test_point_id_deterministic():
-    a = point_id("doc-1", 0)
-    b = point_id("doc-1", 0)
-    c = point_id("doc-1", 1)
+    pid = parent_pk("doc-1", "0")
+    a = point_id(pid, 0)
+    b = point_id(pid, 0)
+    c = point_id(pid, 1)
     assert a == b
     assert a != c
     assert len(a) == 36  # UUID

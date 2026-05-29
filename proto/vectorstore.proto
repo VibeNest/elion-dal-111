@@ -3,10 +3,11 @@ syntax = "proto3";
 package elion.vectorstore.v1;
 
 // VectorStore — Data Access Layer «Элиона».
-// Принимает документы (чистый текст + метаданные), внутри чанкует, эмбеддит
-// (BGE-M3 dense + sparse), хранит в Postgres (SoT) и Qdrant (индекс),
-// отдаёт результаты гибридного поиска (RRF). Сервис не вызывает LLM и не
-// принимает решения о fallback — он лишь ищет и возвращает raw-скоры.
+// Принимает документы (секции + метаданные), внутри режет секции на дочерние
+// чанки, эмбеддит (BGE-M3 dense + sparse), хранит в Postgres (SoT) и Qdrant
+// (индекс). Поиск идёт по детям, но возвращаются РОДИТЕЛИ (секции) — parent-child
+// retrieval: точный матч на детях, богатый контекст из родителя для генерации.
+// Сервис не вызывает LLM и не принимает решения о fallback.
 service VectorStore {
   // Индексация документов. Стрим: ETL/сидер шлёт документы пачкой.
   // Идемпотентно по content_hash (неизменённые документы пропускаются).
@@ -22,16 +23,27 @@ service VectorStore {
   rpc HealthCheck(HealthRequest) returns (HealthStatus);
 }
 
+// Секция = родитель (parent). По её тексту мы строим дочерние чанки.
+message Section {
+  string section_id = 1;            // стабильный ID в пределах документа ("4.9")
+  repeated string heading_path = 2; // хлебные крошки: ["4. Регистрация", "4.9 …"]
+  string url = 3;                   // якорь первоисточника (Evidence Trace)
+  string text = 4;                  // очищенный текст секции
+  int64 published_ts = 5;           // опц.: своя дата секции (0 -> берём из документа)
+  string content_hash = 6;          // опц.: sha256 текста секции
+}
+
 message Document {
-  string doc_id = 1;        // стабильный ID документа (напр. URL-хеш)
-  string source_id = 2;     // один из 6 источников / "knowledge_base"
-  string url = 3;           // первоисточник для Evidence Trace
+  string doc_id = 1;          // стабильный ID документа (напр. URL-хеш)
+  string source_id = 2;       // один из 6 источников / "knowledge_base"
+  string url = 3;             // первоисточник для Evidence Trace
   string title = 4;
-  string text = 5;          // уже очищенный текст
-  string lang = 6;          // "ru" по умолчанию
-  int64 published_ts = 7;   // unix-время публикации (приоритет свежих дат)
-  string content_hash = 8;  // sha256 текста; если не задан — посчитаем сами
-  bool index_in_rag = 9;    // false для бланков-на-скачивание (не индексируются)
+  string lang = 6;            // "ru" по умолчанию
+  int64 published_ts = 7;     // unix-время публикации (приоритет свежих дат)
+  string content_hash = 8;    // sha256; если не задан — посчитаем сами
+  bool index_in_rag = 9;      // false для бланков-на-скачивание (не индексируются)
+  repeated Section sections = 10;  // родители; предпочтительный путь
+  string text = 5;            // fallback для документов без секций (весь doc = 1 родитель)
 }
 
 message UpsertResult {
@@ -39,7 +51,8 @@ message UpsertResult {
   uint32 documents_indexed = 2;   // реально переиндексировано (изменились)
   uint32 documents_skipped = 3;   // не изменились по хешу
   uint32 documents_blank = 4;     // index_in_rag=false
-  uint32 chunks_upserted = 5;
+  uint32 chunks_upserted = 5;     // дочерних чанков проиндексировано
+  uint32 parents_upserted = 6;    // родительских секций сохранено
 }
 
 message SearchRequest {
@@ -49,16 +62,17 @@ message SearchRequest {
   int64 min_published_ts = 4;       // 0 -> без фильтра по дате
 }
 
+// Один Hit = РОДИТЕЛЬ (секция), схлопнутый из лучших дочерних попаданий.
 message Hit {
-  string chunk_id = 1;
+  string parent_id = 1;
   string doc_id = 2;
   string source_id = 3;
-  string url = 4;
+  string url = 4;                   // якорь секции/документа для Evidence Trace
   string title = 5;
-  string text = 6;
-  float score = 7;          // итоговый RRF-скор
-  float dense_score = 8;    // raw cosine (опц., для порога уверенности RAG-ядра)
-  float sparse_score = 9;   // raw sparse (опц.)
+  repeated string heading_path = 6; // хлебные крошки секции
+  string text = 7;                  // ТЕКСТ РОДИТЕЛЯ (для генерации в RAG-ядре)
+  string matched_child = 8;         // сниппет ребёнка, который сматчился («почему нашли»)
+  float score = 9;                  // итоговый RRF-скор лучшего ребёнка
 }
 
 message SearchResponse {
