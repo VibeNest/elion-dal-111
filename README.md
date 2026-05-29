@@ -126,7 +126,14 @@ grpcurl -plaintext -d '{"query":"налоговый вычет","top_k":3}' \
 - дашборд: объёмы (документы/родители/чанки) и таблица источников с датой синхронизации;
 - поиск с показом `dense_score` и matched-сниппета;
 - удаление источника/документа;
-- загрузка PDF/DOCX → парсинг и индексация в один клик.
+- загрузка PDF/DOCX → парсинг и индексация в один клик;
+- **редактирование настроек** (хранятся в БД `app_settings`, override поверх `.env`):
+  - *live* (применяются сразу): `search_prefetch`, `search_parent_fanout`, `recency_weight`,
+    `recency_halflife_days`, `rerank_enabled`, `chunk_tokens`, `chunk_overlap`;
+  - *restart* (подхватываются после перезапуска, помечены в UI): `embedding_backend`,
+    `embedding_model`, `embedding_quantize`.
+  Связь с инфраструктурой (`PG_DSN`/`QDRANT_URL`/порты) остаётся в `.env` (нужна для
+  bootstrap) и не редактируется из админки.
 
 Отключается `ADMIN_ENABLED=false`.
 

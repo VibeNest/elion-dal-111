@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..chunking.chunker import Chunker
@@ -15,6 +17,9 @@ from ..embedding.reranker import Reranker
 from ..store.models import chunk_id, parent_pk
 from ..store.pg_repo import DocInput, ParentBuild, PgRepo, SourceStats, StoreStats, sha256
 from ..store.qdrant_repo import PointInput, QdrantRepo
+from ..store.settings_store import SettingsStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -53,25 +58,81 @@ class IndexService:
         reranker: Reranker | None = None,
         recency_weight: float = 0.0,
         recency_halflife_days: float = 365.0,
+        settings_store: SettingsStore | None = None,
+        reranker_factory: Callable[[], Reranker] | None = None,
+        base_settings=None,
     ) -> None:
         self.pg = pg
         self.qdrant = qdrant
         self.provider = provider
         self.chunker = chunker
-        # Во сколько раз больше детей тянуть, чтобы схлопнуть в top_k уникальных родителей.
-        self.parent_fanout = max(1, parent_fanout)
-        self.reranker = reranker
-        self.recency_weight = recency_weight
-        self.recency_halflife_days = max(1.0, recency_halflife_days)
+        self.settings_store = settings_store
+        self._base = base_settings
+        self._reranker = reranker
+        self._reranker_factory = reranker_factory
+        # Фолбэк-дефолты, если нет store/base (например, в тестах).
+        self._d_parent_fanout = max(1, parent_fanout)
+        self._d_recency_weight = recency_weight
+        self._d_recency_halflife = max(1.0, recency_halflife_days)
+        self._d_rerank_enabled = reranker is not None
 
-    def _recency_mult(self, published_ts: int) -> float:
-        """Множитель к скору по свежести: до (1 + weight) для свежего, ~1 для старого.
-        published_ts=0 (дата неизвестна) -> 1.0 (без штрафа/буста)."""
-        if self.recency_weight <= 0 or published_ts <= 0:
+    # --- живые настройки: override из БД -> .env -> фолбэк ---
+    def _cfg(self, key: str, fallback):
+        if self.settings_store is not None:
+            v = self.settings_store.get(key)
+            if v is not None:
+                return v
+        if self._base is not None:
+            bv = getattr(self._base, key, None)
+            if bv is not None:
+                return bv
+        return fallback
+
+    def _live_parent_fanout(self) -> int:
+        return max(1, int(self._cfg("search_parent_fanout", self._d_parent_fanout)))
+
+    def _live_prefetch(self) -> int:
+        return int(self._cfg("search_prefetch", getattr(self.qdrant, "prefetch", 20)))
+
+    def _live_recency(self) -> tuple[float, float]:
+        return (
+            float(self._cfg("recency_weight", self._d_recency_weight)),
+            max(1.0, float(self._cfg("recency_halflife_days", self._d_recency_halflife))),
+        )
+
+    def _live_rerank_enabled(self) -> bool:
+        return bool(self._cfg("rerank_enabled", self._d_rerank_enabled))
+
+    def _apply_live_chunk_params(self) -> None:
+        tokens = int(self._cfg("chunk_tokens", self.chunker.chunk_tokens))
+        overlap = int(self._cfg("chunk_overlap", self.chunker.chunk_overlap))
+        self.chunker.chunk_tokens = tokens
+        self.chunker.chunk_overlap = min(overlap, max(0, tokens - 1))  # защита от overlap>=tokens
+
+    def _get_reranker(self) -> Reranker | None:
+        if self._reranker is None and self._reranker_factory is not None:
+            try:
+                self._reranker = self._reranker_factory()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Не удалось загрузить реранкер: %s", e)
+                self._reranker_factory = None
+        return self._reranker
+
+    @staticmethod
+    def _recency_mult(published_ts: int, weight: float, halflife: float) -> float:
+        """Множитель к скору по свежести: до (1+weight) для свежего, ~1 для старого.
+        published_ts=0 (дата неизвестна) -> 1.0."""
+        if weight <= 0 or published_ts <= 0:
             return 1.0
         age_days = max(0.0, (time.time() - published_ts) / 86400.0)
-        decay = 0.5 ** (age_days / self.recency_halflife_days)  # (0, 1]
-        return 1.0 + self.recency_weight * decay
+        return 1.0 + weight * (0.5 ** (age_days / halflife))
+
+    def settings_view(self):
+        return self.settings_store.view(self._base) if self.settings_store is not None else []
+
+    def update_settings(self, items: dict[str, str]) -> None:
+        if self.settings_store is not None:
+            self.settings_store.set_many(items)
 
     def process_document(self, doc: DocInput, counts: UpsertCounts) -> None:
         counts.received += 1
@@ -96,6 +157,7 @@ class IndexService:
             return
 
         self.pg.upsert_document(doc, raw_text)
+        self._apply_live_chunk_params()
 
         # Секция -> родитель, текст секции -> дети.
         parents: list[ParentBuild] = []
@@ -159,9 +221,13 @@ class IndexService:
         self, query: str, top_k: int, source_ids: list[str], min_published_ts: int
     ) -> list[ParentHit]:
         embedding = self.provider.embed_query(query)
-        limit = top_k * self.parent_fanout
+        limit = top_k * self._live_parent_fanout()
         child_hits = self.qdrant.search(
-            embedding, limit=limit, source_ids=source_ids, min_published_ts=min_published_ts
+            embedding,
+            limit=limit,
+            source_ids=source_ids,
+            min_published_ts=min_published_ts,
+            prefetch_limit=self._live_prefetch(),
         )
 
         # Схлопываем детей в уникальных родителей-кандидатов (порядок RRF сохраняем).
@@ -203,14 +269,17 @@ class IndexService:
 
         # Ранжирование: hybrid (RRF) -> опц. реранкер -> опц. recency -> top_k.
         rescored = False
-        if self.reranker is not None:
-            scores = self.reranker.rerank(query, [c.text for c in candidates])
-            for c, s in zip(candidates, scores, strict=True):
-                c.score = s
-            rescored = True
-        if self.recency_weight > 0:
+        if self._live_rerank_enabled():
+            reranker = self._get_reranker()
+            if reranker is not None:
+                scores = reranker.rerank(query, [c.text for c in candidates])
+                for c, s in zip(candidates, scores, strict=True):
+                    c.score = s
+                rescored = True
+        weight, halflife = self._live_recency()
+        if weight > 0:
             for c in candidates:
-                c.score *= self._recency_mult(records[c.parent_id].published_ts)
+                c.score *= self._recency_mult(records[c.parent_id].published_ts, weight, halflife)
             rescored = True
         if rescored:
             candidates.sort(key=lambda c: c.score, reverse=True)

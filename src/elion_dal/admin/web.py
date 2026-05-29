@@ -16,12 +16,13 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ..ingestion.loaders import load_document
 from ..service.sync import IndexService, UpsertCounts
 from ..store.pg_repo import DocInput, SectionInput, sha256
+from ..store.settings_store import FIELDS
 
 _HEAD = """<!doctype html><html lang=ru><head><meta charset=utf-8>
 <title>Элион — DAL Admin</title>
@@ -69,6 +70,31 @@ def _doc_id(filename: str) -> str:
     return "kb-" + hashlib.sha1(filename.encode("utf-8")).hexdigest()[:12]
 
 
+def _settings_form(views) -> str:
+    rows = ""
+    for v in views:
+        badge = " <span class=muted>(после рестарта)</span>" if v.tier == "restart" else ""
+        ovr = " <span class=muted>· override</span>" if v.is_override else ""
+        if v.type == "bool":
+            checked = "checked" if v.value else ""
+            field = f"<input type=checkbox name='{v.key}' {checked}>"
+        else:
+            val = "" if v.value is None else html.escape(str(v.value))
+            typ = "number" if v.type in ("int", "float") else "text"
+            step = " step=any" if v.type == "float" else ""
+            field = f"<input type={typ}{step} name='{v.key}' value='{val}'>"
+        rows += f"<tr><td>{html.escape(v.label)}{badge}{ovr}</td><td>{field}</td></tr>"
+    if not rows:
+        return ""
+    return (
+        "<h2>Настройки</h2><form method=post action='/settings'>"
+        "<table>" + rows + "</table>"
+        "<button>Сохранить</button> "
+        "<span class=muted>live применяются сразу; restart — после перезапуска сервиса</span>"
+        "</form>"
+    )
+
+
 def create_app(index: IndexService) -> FastAPI:
     app = FastAPI(title="Элион — DAL Admin")
 
@@ -107,8 +133,24 @@ def create_app(index: IndexService) -> FastAPI:
           <button>Искать</button>
         </form>
         <div id=results></div>
+        {_settings_form(index.settings_view())}
         """
         return _HEAD + body + _SCRIPT
+
+    @app.post("/settings")
+    async def update_settings(request: Request) -> RedirectResponse:
+        form = await request.form()
+        items: dict[str, str] = {}
+        for f in FIELDS:
+            if f.type == "bool":
+                # снятый чекбокс не приходит в форме -> false
+                items[f.key] = "true" if form.get(f.key) is not None else "false"
+            else:
+                val = form.get(f.key)
+                if val is not None and str(val) != "":
+                    items[f.key] = str(val)
+        index.update_settings(items)
+        return RedirectResponse("/", status_code=303)
 
     @app.get("/api/stats")
     def api_stats() -> dict:

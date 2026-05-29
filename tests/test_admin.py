@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from elion_dal.admin.web import create_app
 from elion_dal.service.sync import ParentHit
 from elion_dal.store.pg_repo import SourceStats, StoreStats
+from elion_dal.store.settings_store import SettingView
 
 
 class FakeIndex:
@@ -16,6 +17,7 @@ class FakeIndex:
         self.deleted_sources = []
         self.deleted_docs = []
         self.uploaded = []
+        self.updated_settings = None
 
     def get_stats(self):
         return StoreStats(2, 3, 9, [SourceStats("s1", "Источник 1", 1700000000, 2, 3, 9)])
@@ -50,6 +52,16 @@ class FakeIndex:
     def process_document(self, doc, counts):
         self.uploaded.append(doc)
 
+    def settings_view(self):
+        return [
+            SettingView("search_parent_fanout", "Fan-out", "live", "int", 5, False),
+            SettingView("rerank_enabled", "Реранкер", "live", "bool", False, False),
+            SettingView("embedding_backend", "Бэкенд", "restart", "str", "fastembed", False),
+        ]
+
+    def update_settings(self, items):
+        self.updated_settings = items
+
 
 def client():
     return TestClient(create_app(FakeIndex()))
@@ -60,6 +72,22 @@ def test_dashboard_renders():
     assert r.status_code == 200
     assert "Элион — DAL Admin" in r.text
     assert "Источник 1" in r.text  # строка таблицы источников
+    assert "Настройки" in r.text  # секция редактирования настроек
+    assert "после рестарта" in r.text  # пометка у restart-настройки
+
+
+def test_settings_post_updates_index():
+    idx = FakeIndex()
+    c = TestClient(create_app(idx))
+    r = c.post(
+        "/settings",
+        data={"search_parent_fanout": "7", "rerank_enabled": "on"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert idx.updated_settings["search_parent_fanout"] == "7"
+    assert idx.updated_settings["rerank_enabled"] == "true"  # чекбокс отмечен
+    assert idx.updated_settings["embedding_quantize"] == "false"  # bool не отмечен -> false
 
 
 def test_api_stats():

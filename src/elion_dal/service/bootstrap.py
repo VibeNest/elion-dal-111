@@ -1,8 +1,9 @@
 """Сборка IndexService из конфига (без зависимости от gRPC).
 
 Используется и сервером, и сид-утилитой, и CLI — чтобы не дублировать проводку.
-ВНИМАНИЕ: build_index_service грузит эмбеддинг-модель (на первом запуске
-скачивает BGE-M3) и создаёт коллекцию Qdrant при отсутствии.
+Эффективный конфиг = .env, поверх которого ложатся override из БД (app_settings):
+restart-настройки (backend/model/quantize) применяются здесь, на старте;
+live-настройки читаются IndexService на каждом запросе.
 """
 
 from __future__ import annotations
@@ -12,13 +13,29 @@ from ..config import Settings, get_settings
 from ..embedding.factory import build_provider
 from ..store.pg_repo import PgRepo
 from ..store.qdrant_repo import QdrantRepo
+from ..store.settings_store import SettingsStore
 from .sync import IndexService
 
 
 def build_index_service(settings: Settings | None = None, ensure: bool = True) -> IndexService:
     settings = settings or get_settings()
-    provider = build_provider(settings)
     pg = PgRepo(settings.pg_dsn)
+    store = SettingsStore(pg.engine)
+    store.load()
+
+    # restart-настройки: override из БД поверх .env (применяются на старте).
+    backend = store.get("embedding_backend") or settings.embedding_backend
+    model_ovr = store.get("embedding_model")
+    quant_ovr = store.get("embedding_quantize")
+    eff = settings.model_copy(
+        update={
+            "embedding_backend": backend,
+            "embedding_model": model_ovr if model_ovr is not None else settings.embedding_model,
+            "embedding_quantize": settings.embedding_quantize if quant_ovr is None else quant_ovr,
+        }
+    )
+
+    provider = build_provider(eff)
     qdrant = QdrantRepo(
         url=settings.qdrant_url,
         collection=settings.qdrant_collection,
@@ -31,11 +48,13 @@ def build_index_service(settings: Settings | None = None, ensure: bool = True) -
         chunk_overlap=settings.chunk_overlap,
         model_name=settings.chunk_tokenizer_model,
     )
-    reranker = None
-    if settings.rerank_enabled:
+
+    def _reranker_factory():
+        # Ленивая загрузка: модель реранкера грузится только при первом включённом поиске.
         from ..embedding.reranker import FlagRerankerProvider
 
-        reranker = FlagRerankerProvider(settings.rerank_model)
+        return FlagRerankerProvider(eff.rerank_model)
+
     if ensure:
         qdrant.ensure_collection()
     return IndexService(
@@ -44,7 +63,9 @@ def build_index_service(settings: Settings | None = None, ensure: bool = True) -
         provider,
         chunker,
         parent_fanout=settings.search_parent_fanout,
-        reranker=reranker,
         recency_weight=settings.recency_weight,
         recency_halflife_days=settings.recency_halflife_days,
+        settings_store=store,
+        reranker_factory=_reranker_factory,
+        base_settings=settings,
     )

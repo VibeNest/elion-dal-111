@@ -183,22 +183,23 @@ class QdrantRepo:
         limit: int,
         source_ids: Sequence[str] = (),
         min_published_ts: int = 0,
+        prefetch_limit: int | None = None,
     ) -> list[SearchHit]:
         """Гибридный поиск по детям. `limit` — сколько дочерних попаданий вернуть
-        (sync схлопнёт их в уникальных родителей)."""
+        (sync схлопнёт их в уникальных родителей). `prefetch_limit` переопределяет
+        число кандидатов на ветку (живая настройка)."""
         qfilter = self._filter(source_ids, min_published_ts)
+        pf = prefetch_limit or self.prefetch
         result = self.client.query_points(
             collection_name=self.collection,
             prefetch=[
-                models.Prefetch(
-                    query=query.dense, using=DENSE, limit=self.prefetch, filter=qfilter
-                ),
+                models.Prefetch(query=query.dense, using=DENSE, limit=pf, filter=qfilter),
                 models.Prefetch(
                     query=models.SparseVector(
                         indices=query.sparse.indices, values=query.sparse.values
                     ),
                     using=SPARSE,
-                    limit=self.prefetch,
+                    limit=pf,
                     filter=qfilter,
                 ),
             ],

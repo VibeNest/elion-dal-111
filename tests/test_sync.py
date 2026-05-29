@@ -72,6 +72,9 @@ class FakeQdrant:
         self.deleted_docs: list[str] = []
         self.search_hits: list[SearchHit] = []
         self.fail_upserts: int = 0  # сколько ближайших upsert_chunks уронить
+        self.prefetch: int = 20
+        self.last_limit: int | None = None
+        self.last_prefetch: int | None = None
 
     def delete_by_doc(self, doc_id):
         self.deleted_docs.append(doc_id)
@@ -88,7 +91,9 @@ class FakeQdrant:
     def delete_by_source(self, source_id):
         pass
 
-    def search(self, embedding, limit, source_ids=(), min_published_ts=0):
+    def search(self, embedding, limit, source_ids=(), min_published_ts=0, prefetch_limit=None):
+        self.last_limit = limit
+        self.last_prefetch = prefetch_limit
         return self.search_hits[:limit]
 
     def dense_scores(self, embedding, limit, source_ids=(), min_published_ts=0):
@@ -96,6 +101,19 @@ class FakeQdrant:
 
     def ping(self):
         return True
+
+
+class FakeStore:
+    """Минимальный SettingsStore для тестов: get() отдаёт уже типизированные значения."""
+
+    def __init__(self, values: dict | None = None):
+        self._v = values or {}
+
+    def get(self, key):
+        return self._v.get(key)
+
+    def view(self, base):
+        return []
 
 
 class FakeReranker:
@@ -119,6 +137,10 @@ class FakeProvider:
 
 
 class FakeChunker:
+    def __init__(self):
+        self.chunk_tokens = 10
+        self.chunk_overlap = 2
+
     def split(self, text):
         parts = [p for p in text.split("|") if p]
         return [Chunk(index=i, text=p, token_count=len(p)) for i, p in enumerate(parts)]
@@ -292,6 +314,54 @@ def test_reranker_reorders_parents():
     hits = svc.search("q", top_k=2, source_ids=[], min_published_ts=0)
     # Реранкер выше оценил "a|b" (d1::1) -> он должен выйти первым.
     assert [h.parent_id for h in hits] == ["d1::1", "d1::2"]
+
+
+def test_live_settings_override_fanout_and_prefetch():
+    """DB-настройки читаются на лету: parent_fanout и prefetch влияют на запрос к Qdrant."""
+    svc = IndexService(
+        FakePg(),
+        FakeQdrant(),
+        FakeProvider(),
+        FakeChunker(),
+        settings_store=FakeStore({"search_parent_fanout": 3, "search_prefetch": 42}),
+    )
+    svc.search("q", top_k=4, source_ids=[], min_published_ts=0)
+    assert svc.qdrant.last_limit == 12  # top_k(4) * fanout(3)
+    assert svc.qdrant.last_prefetch == 42
+
+
+def test_live_rerank_toggle_uses_lazy_factory():
+    """rerank_enabled=true в БД -> реранкер лениво грузится фабрикой и переупорядочивает."""
+    built = []
+
+    def factory():
+        rr = FakeReranker({"a|b": 0.9, "c|d": 0.1})
+        built.append(rr)
+        return rr
+
+    svc = IndexService(
+        FakePg(),
+        FakeQdrant(),
+        FakeProvider(),
+        FakeChunker(),
+        settings_store=FakeStore({"rerank_enabled": True}),
+        reranker_factory=factory,
+    )
+    counts = UpsertCounts()
+    svc.process_document(
+        doc(sections=[section("a|b", sid="1"), section("c|d", sid="2")], doc_id="d1"), counts
+    )
+    svc.qdrant.search_hits = [
+        SearchHit(
+            chunk_id="d1::2#0", parent_id="d1::2", doc_id="d1", source_id="s1", text="c", score=0.9
+        ),
+        SearchHit(
+            chunk_id="d1::1#0", parent_id="d1::1", doc_id="d1", source_id="s1", text="a", score=0.7
+        ),
+    ]
+    hits = svc.search("q", top_k=2, source_ids=[], min_published_ts=0)
+    assert len(built) == 1  # фабрика вызвана один раз (ленивая загрузка)
+    assert [h.parent_id for h in hits] == ["d1::1", "d1::2"]  # реранкер переупорядочил
 
 
 def test_recency_boost_reorders():
