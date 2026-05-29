@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # Логирование
     log_level: str = "INFO"
 
+    # Веб-админка (FastAPI в том же процессе, что и gRPC)
+    admin_enabled: bool = True
+    admin_host: str = "0.0.0.0"
+    admin_port: int = 8080
+
     # Qdrant
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "elion_chunks"

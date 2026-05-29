@@ -7,11 +7,15 @@
 alembic==1.18.4
     # via elion-dal (pyproject.toml)
 annotated-doc==0.0.4
-    # via typer
+    # via
+    #   fastapi
+    #   typer
 annotated-types==0.7.0
     # via pydantic
 anyio==4.13.0
-    # via httpx
+    # via
+    #   httpx
+    #   starlette
 certifi==2026.5.20
     # via
     #   httpcore
@@ -23,11 +27,14 @@ click==8.4.1
     # via
     #   huggingface-hub
     #   typer
+    #   uvicorn
 colorama==0.4.6
     # via
     #   click
     #   loguru
     #   tqdm
+fastapi==0.136.3
+    # via elion-dal (pyproject.toml)
 fastembed==0.8.0
     # via elion-dal (pyproject.toml)
 filelock==3.29.0
@@ -46,7 +53,9 @@ grpcio==1.80.0
 grpcio-tools==1.80.0
     # via elion-dal (pyproject.toml)
 h11==0.16.0
-    # via httpcore
+    # via
+    #   httpcore
+    #   uvicorn
 h2==4.3.0
     # via httpx
 hf-xet==1.5.0
@@ -134,6 +143,7 @@ py-rust-stemmers==0.1.8
 pydantic==2.13.4
     # via
     #   elion-dal (pyproject.toml)
+    #   fastapi
     #   langchain-core
     #   langsmith
     #   pydantic-settings
@@ -150,6 +160,8 @@ python-docx==1.2.0
     # via elion-dal (pyproject.toml)
 python-dotenv==1.2.2
     # via pydantic-settings
+python-multipart==0.0.29
+    # via elion-dal (pyproject.toml)
 pywin32==311 ; sys_platform == "win32"
     # via portalocker
 pyyaml==6.0.3
@@ -178,6 +190,8 @@ sqlalchemy==2.0.50
     # via
     #   alembic
     #   elion-dal (pyproject.toml)
+starlette==1.2.0
+    # via fastapi
 tenacity==9.1.4
     # via langchain-core
 tokenizers==0.22.2
@@ -199,6 +213,7 @@ typing-extensions==4.15.0
     # via
     #   alembic
     #   anyio
+    #   fastapi
     #   grpcio
     #   huggingface-hub
     #   langchain-core
@@ -208,9 +223,11 @@ typing-extensions==4.15.0
     #   pydantic-core
     #   python-docx
     #   sqlalchemy
+    #   starlette
     #   typing-inspection
 typing-inspection==0.4.2
     # via
+    #   fastapi
     #   pydantic
     #   pydantic-settings
 tzdata==2026.2
@@ -223,6 +240,8 @@ uuid-utils==0.16.0
     # via
     #   langchain-core
     #   langsmith
+uvicorn==0.48.0
+    # via elion-dal (pyproject.toml)
 websockets==16.0
     # via langsmith
 win32-setctime==1.2.0 ; sys_platform == "win32"

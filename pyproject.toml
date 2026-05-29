@@ -18,6 +18,9 @@ dependencies = [
     "transformers>=4.44",
     "pypdf>=5.0",
     "python-docx>=1.1",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

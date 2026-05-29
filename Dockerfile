@@ -17,6 +17,6 @@ COPY src ./src
 # Генерируем gRPC-код в src/elion_dal/grpc_gen, затем ставим сам пакет без зависимостей.
 RUN python scripts/gen_proto.py && pip install --no-cache-dir --no-deps .
 
-EXPOSE 50051
+EXPOSE 50051 8080
 
 CMD ["python", "-m", "elion_dal.service.server"]

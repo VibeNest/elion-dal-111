@@ -42,7 +42,8 @@ services:
       PG_DSN: postgresql+psycopg://elion:elion@postgres:5432/elion
       EMBEDDING_BACKEND: fastembed
     ports:
-      - "50051:50051"
+      - "50051:50051"   # gRPC
+      - "8080:8080"     # веб-админка
     profiles: ["full"]   # `docker compose --profile full up` поднимет и сервис
 
 volumes:

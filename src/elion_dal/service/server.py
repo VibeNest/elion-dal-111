@@ -89,7 +89,23 @@ def serve() -> None:
     server.add_insecure_port(addr)
     server.start()
     logger.info("gRPC слушает на %s", addr)
-    server.wait_for_termination()
+
+    if settings.admin_enabled:
+        # Веб-админка в этом же процессе (общий IndexService, одна модель).
+        import uvicorn
+
+        from ..admin.web import create_app
+
+        logger.info("Admin UI на http://%s:%d", settings.admin_host, settings.admin_port)
+        uvicorn.run(
+            create_app(index),
+            host=settings.admin_host,
+            port=settings.admin_port,
+            log_level=settings.log_level.lower(),
+        )
+        server.stop(0)
+    else:
+        server.wait_for_termination()
 
 
 if __name__ == "__main__":
