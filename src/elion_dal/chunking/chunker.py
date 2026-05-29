@@ -1,12 +1,13 @@
 """Token-aware чанкинг под токенайзер BGE-M3.
 
 Рекурсивно режем по естественным границам (абзацы -> строки -> предложения ->
-слова), измеряя длину в токенах BGE-M3, с перекрытием. Токенайзер грузится один
-раз; быстрый и не требует GPU.
+слова), измеряя длину в токенах BGE-M3, с перекрытием. Токенайзер грузится лениво
+(один раз) и не требует GPU. Для тестов длину можно подменить через length_fn.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -35,15 +36,20 @@ class Chunker:
         chunk_tokens: int = 400,
         chunk_overlap: int = 64,
         model_name: str = "BAAI/bge-m3",
+        length_fn: Callable[[str], int] | None = None,
     ) -> None:
         if chunk_overlap >= chunk_tokens:
             raise ValueError("chunk_overlap должен быть меньше chunk_tokens")
         self.chunk_tokens = chunk_tokens
         self.chunk_overlap = chunk_overlap
-        self._tok = _tokenizer(model_name)
+        self._model_name = model_name
+        # length_fn задаётся в тестах (offline); иначе считаем токенами BGE-M3.
+        self._length_fn = length_fn
 
     def _count(self, text: str) -> int:
-        return len(self._tok.encode(text, add_special_tokens=False))
+        if self._length_fn is not None:
+            return self._length_fn(text)
+        return len(_tokenizer(self._model_name).encode(text, add_special_tokens=False))
 
     def split(self, text: str) -> list[Chunk]:
         from langchain_text_splitters import RecursiveCharacterTextSplitter
