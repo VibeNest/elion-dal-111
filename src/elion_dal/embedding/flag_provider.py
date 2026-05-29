@@ -20,9 +20,10 @@ class FlagProvider(EmbeddingProvider):
     def __init__(self, model_name: str = "BAAI/bge-m3", dim: int = 1024) -> None:
         from FlagEmbedding import BGEM3FlagModel
 
-        self.dim = dim
         # На CPU fp16 не поддерживается/медленнее -> отключаем.
         self._model = BGEM3FlagModel(model_name, use_fp16=False)
+        # Размерность определяем по модели (для BGE-M3 это 1024).
+        self.dim = len(self._encode(["x"])[0].dense)
 
     def _encode(self, texts: list[str]) -> list[Embedding]:
         out = self._model.encode(

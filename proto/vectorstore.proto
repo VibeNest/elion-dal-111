@@ -53,6 +53,7 @@ message UpsertResult {
   uint32 documents_blank = 4;     // index_in_rag=false
   uint32 chunks_upserted = 5;     // дочерних чанков проиндексировано
   uint32 parents_upserted = 6;    // родительских секций сохранено
+  uint32 documents_failed = 7;    // упали при обработке (изоляция ошибок в стриме)
 }
 
 message SearchRequest {

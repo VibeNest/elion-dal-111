@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -9,6 +10,8 @@ from qdrant_client import QdrantClient, models
 
 from ..embedding.base import Embedding
 from .models import point_id
+
+logger = logging.getLogger(__name__)
 
 DENSE = "dense"
 SPARSE = "sparse"
@@ -74,6 +77,7 @@ class QdrantRepo:
 
     def ensure_collection(self) -> None:
         if self.client.collection_exists(self.collection):
+            self._warn_on_dim_mismatch()
             return
         sparse_params = models.SparseVectorParams(
             modifier=models.Modifier.IDF if self.sparse_uses_idf else None
@@ -96,6 +100,23 @@ class QdrantRepo:
             field_name="published_ts",
             field_schema=models.PayloadSchemaType.INTEGER,
         )
+
+    def _warn_on_dim_mismatch(self) -> None:
+        """Если коллекция уже есть с другой размерностью dense — предупредить
+        (например, сменили модель эмбеддингов без пересоздания коллекции)."""
+        try:
+            info = self.client.get_collection(self.collection)
+            existing = info.config.params.vectors[DENSE].size
+            if existing != self.dim:
+                logger.warning(
+                    "Qdrant collection '%s' имеет dense-размерность %d, а модель даёт %d. "
+                    "Пересоздайте коллекцию или смените модель.",
+                    self.collection,
+                    existing,
+                    self.dim,
+                )
+        except Exception:  # noqa: BLE001 — диагностика не должна ронять старт
+            pass
 
     def upsert_chunks(self, points: Sequence[PointInput]) -> int:
         structs = [

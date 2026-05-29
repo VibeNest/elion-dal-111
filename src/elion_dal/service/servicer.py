@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from ..config import Settings
 from ..grpc_gen import vectorstore_pb2 as pb
 from ..grpc_gen import vectorstore_pb2_grpc as pb_grpc
 from ..store.pg_repo import DocInput, SectionInput
 from .sync import IndexService, UpsertCounts
+
+logger = logging.getLogger(__name__)
 
 
 class VectorStoreServicer(pb_grpc.VectorStoreServicer):
@@ -42,7 +46,13 @@ class VectorStoreServicer(pb_grpc.VectorStoreServicer):
                 index_in_rag=d.index_in_rag,
                 sections=sections,
             )
-            self.index.process_document(doc, counts)
+            # Изоляция ошибок: один битый документ не должен ронять весь стрим.
+            # (process_document инкрементит received первой строкой, до любых сбоев.)
+            try:
+                self.index.process_document(doc, counts)
+            except Exception:
+                counts.failed += 1
+                logger.exception("Не удалось обработать документ doc_id=%s", d.doc_id)
         return pb.UpsertResult(
             documents_received=counts.received,
             documents_indexed=counts.indexed,
@@ -50,6 +60,7 @@ class VectorStoreServicer(pb_grpc.VectorStoreServicer):
             documents_blank=counts.blank,
             chunks_upserted=counts.chunks_upserted,
             parents_upserted=counts.parents_upserted,
+            documents_failed=counts.failed,
         )
 
     def Search(self, request, context) -> pb.SearchResponse:

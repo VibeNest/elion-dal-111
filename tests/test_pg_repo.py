@@ -36,7 +36,10 @@ def test_upsert_and_get_content_hash(tmp_path):
     repo = make_repo(tmp_path)
     repo.ensure_source("s1")
     assert repo.get_content_hash("d1") is None
+    # upsert_document пишет хеш как "" (pending) — фиксируется отдельно.
     repo.upsert_document(make_doc(content_hash="abc"), raw_text="секция")
+    assert repo.get_content_hash("d1") == ""
+    repo.set_content_hash("d1", "abc")
     assert repo.get_content_hash("d1") == "abc"
 
 

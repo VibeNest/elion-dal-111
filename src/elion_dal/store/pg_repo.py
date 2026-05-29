@@ -110,6 +110,10 @@ class PgRepo:
             ).scalar_one_or_none()
 
     def upsert_document(self, doc: DocInput, raw_text: str) -> None:
+        """Записать мету документа. content_hash НЕ трогаем здесь — он
+        фиксируется отдельно через set_content_hash() только после успешной
+        индексации в Qdrant (см. sync), чтобы сбой Qdrant не приводил к дрейфу
+        (документ считался бы «проиндексированным» без точек)."""
         with self._sm.begin() as s:
             existing = s.get(Document, doc.doc_id)
             if existing is None:
@@ -121,7 +125,7 @@ class PgRepo:
                         title=doc.title,
                         lang=doc.lang,
                         published_ts=doc.published_ts,
-                        content_hash=doc.content_hash,
+                        content_hash="",  # pending — выставится после успеха
                         raw_text=raw_text,
                         index_in_rag=doc.index_in_rag,
                     )
@@ -132,9 +136,16 @@ class PgRepo:
                 existing.title = doc.title
                 existing.lang = doc.lang
                 existing.published_ts = doc.published_ts
-                existing.content_hash = doc.content_hash
                 existing.raw_text = raw_text
                 existing.index_in_rag = doc.index_in_rag
+                # content_hash намеренно не обновляем здесь.
+
+    def set_content_hash(self, doc_id: str, content_hash: str) -> None:
+        """Зафиксировать content_hash после успешной индексации (commit point)."""
+        with self._sm.begin() as s:
+            d = s.get(Document, doc_id)
+            if d is not None:
+                d.content_hash = content_hash
 
     def replace_parents_and_chunks(self, doc_id: str, parents: Sequence[ParentBuild]) -> None:
         with self._sm.begin() as s:

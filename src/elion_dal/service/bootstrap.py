@@ -22,7 +22,7 @@ def build_index_service(settings: Settings | None = None, ensure: bool = True) -
     qdrant = QdrantRepo(
         url=settings.qdrant_url,
         collection=settings.qdrant_collection,
-        dim=settings.embedding_dim,
+        dim=provider.dim,  # размерность из реальной модели, не из конфига
         sparse_uses_idf=provider.sparse_uses_idf,
         prefetch=settings.search_prefetch,
     )

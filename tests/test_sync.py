@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from elion_dal.chunking.chunker import Chunk
 from elion_dal.embedding.base import Embedding, SparseVector
 from elion_dal.service.sync import IndexService, UpsertCounts
@@ -28,8 +30,11 @@ class FakePg:
         return self.hashes.get(doc_id)
 
     def upsert_document(self, doc, raw_text):
-        self.hashes[doc.doc_id] = doc.content_hash
+        # Хеш здесь НЕ трогаем (как в реальном PgRepo) — только set_content_hash.
         self.docs[doc.doc_id] = doc
+
+    def set_content_hash(self, doc_id, content_hash):
+        self.hashes[doc_id] = content_hash
 
     def replace_parents_and_chunks(self, doc_id, parents):
         self.parents[doc_id] = list(parents)
@@ -63,12 +68,16 @@ class FakeQdrant:
         self.points: dict[str, list] = {}
         self.deleted_docs: list[str] = []
         self.search_hits: list[SearchHit] = []
+        self.fail_upserts: int = 0  # сколько ближайших upsert_chunks уронить
 
     def delete_by_doc(self, doc_id):
         self.deleted_docs.append(doc_id)
         self.points.pop(doc_id, None)
 
     def upsert_chunks(self, points):
+        if self.fail_upserts > 0:
+            self.fail_upserts -= 1
+            raise RuntimeError("qdrant upsert failed")
         for p in points:
             self.points.setdefault(p.payload["doc_id"], []).append(p)
         return len(points)
@@ -168,6 +177,24 @@ def test_content_hash_autocomputed():
     counts = UpsertCounts()
     svc.process_document(doc(h=""), counts)
     assert svc.pg.hashes["d1"]
+
+
+def test_hash_not_committed_until_qdrant_success():
+    """A1: при сбое Qdrant хеш не фиксируется -> следующий прогон переиндексирует."""
+    svc = make_service()
+    svc.qdrant.fail_upserts = 1  # первый upsert падает
+    counts = UpsertCounts()
+    with pytest.raises(RuntimeError):
+        svc.process_document(doc(h="v1"), counts)
+    assert svc.pg.get_content_hash("d1") is None  # хеш НЕ зафиксирован
+
+    # Qdrant ожил: повторный прогон индексирует, а не пропускает по хешу.
+    counts2 = UpsertCounts()
+    svc.process_document(doc(h="v1"), counts2)
+    assert counts2.indexed == 1
+    assert counts2.skipped == 0
+    assert svc.pg.get_content_hash("d1") == "v1"
+    assert svc.qdrant.points["d1"]
 
 
 def test_multisection_creates_two_parents():

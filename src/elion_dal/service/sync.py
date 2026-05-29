@@ -21,6 +21,7 @@ class UpsertCounts:
     indexed: int = 0
     skipped: int = 0
     blank: int = 0
+    failed: int = 0
     parents_upserted: int = 0
     chunks_upserted: int = 0
 
@@ -67,11 +68,12 @@ class IndexService:
             self.pg.upsert_document(doc, raw_text)
             self.pg.replace_parents_and_chunks(doc.doc_id, [])
             self.qdrant.delete_by_doc(doc.doc_id)
+            self.pg.set_content_hash(doc.doc_id, doc.content_hash)
             counts.blank += 1
             return
 
         prev_hash = self.pg.get_content_hash(doc.doc_id)
-        if prev_hash is not None and prev_hash == doc.content_hash:
+        if prev_hash and prev_hash == doc.content_hash:
             counts.skipped += 1
             return
 
@@ -129,6 +131,8 @@ class IndexService:
                     i += 1
             counts.chunks_upserted += self.qdrant.upsert_chunks(points)
 
+        # Commit point: фиксируем хеш только теперь — Qdrant уже обновлён.
+        self.pg.set_content_hash(doc.doc_id, doc.content_hash)
         counts.parents_upserted += len(parents)
         self.pg.touch_source_indexed(doc.source_id)
         counts.indexed += 1

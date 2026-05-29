@@ -29,9 +29,12 @@ class FastEmbedProvider(EmbeddingProvider):
     ) -> None:
         from fastembed import SparseTextEmbedding, TextEmbedding
 
-        self.dim = dim
         self._dense = TextEmbedding(model_name=dense_model)
         self._sparse = SparseTextEmbedding(model_name=sparse_model)
+        # Размерность берём по факту из модели, а не из конфига (снимает footgun
+        # с рассинхроном EMBEDDING_DIM и реальной моделью).
+        probe = next(iter(self._dense.embed(["x"])))
+        self.dim = len(probe.tolist()) if hasattr(probe, "tolist") else len(probe)
 
     @staticmethod
     def _to_sparse(s) -> SparseVector:
