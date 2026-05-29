@@ -40,6 +40,9 @@ class Settings(BaseSettings):
 
     # Postgres (source-of-truth)
     pg_dsn: str = "postgresql+psycopg://elion:elion@localhost:5432/elion"
+    # Создавать схему БД при старте (create_all) — чтобы деплой работал из коробки.
+    # Идемпотентно. Для окружений с alembic выставить false и катать миграции отдельно.
+    auto_migrate: bool = True
 
     # Эмбеддинги
     # fastembed -> ONNX multilingual-e5 (быстро на CPU); flag -> настоящий BGE-M3 (вариант A).

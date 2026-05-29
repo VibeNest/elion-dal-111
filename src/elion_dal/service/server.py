@@ -65,6 +65,12 @@ def serve() -> None:
     )
     _wait_for_backends(index, settings)
 
+    if settings.auto_migrate:
+        # Создаём схему из моделей (идемпотентно) — деплой работает без отдельного шага alembic.
+        index.pg.create_all()
+        index.settings_store.load()  # перечитать app_settings после создания таблицы
+        logger.info("Схема БД готова (auto_migrate=create_all)")
+
     token_on = bool(index.settings_store.get("api_token") or settings.api_token)
     logger.info("gRPC API-токен: %s", "включён" if token_on else "ВЫКЛ (ручки открыты)")
 
