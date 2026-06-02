@@ -115,12 +115,22 @@ def create_api(index: IndexService, settings: Settings) -> FastAPI:
     def search(req: SearchIn, request: Request) -> dict:
         top_k = req.top_k or settings.search_top_k
         t0 = time.perf_counter()
-        hits = index.search(
-            query=req.query,
-            top_k=top_k,
-            source_ids=req.source_ids,
-            min_published_ts=req.min_published_ts,
-        )
+        try:
+            hits = index.search(
+                query=req.query,
+                top_k=top_k,
+                source_ids=req.source_ids,
+                min_published_ts=req.min_published_ts,
+            )
+        except Exception as e:  # noqa: BLE001 — деградируем мягко, не голым 500
+            # Полный traceback — в логи; клиенту — 503 (бэкенд поиска недоступен).
+            # TODO(diag): временно отдаём тип/сообщение в detail для диагностики 500
+            #             на проде; после фикса заменить на generic-текст.
+            logger.exception("search failed query=%r", req.query)
+            raise HTTPException(
+                status_code=503,
+                detail=f"search backend error: {type(e).__name__}: {str(e)[:300]}",
+            ) from e
         dt_ms = (time.perf_counter() - t0) * 1000
         if hits:
             logger.info(
