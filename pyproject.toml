@@ -16,6 +16,8 @@ dependencies = [
     "pydantic-settings>=2.4",
     "langchain-text-splitters>=0.3",
     "transformers>=4.44",
+    # dense-провайдер st-bm25 (рекомендуемый конфиг): deepvk/USER-bge-m3 через sentence-transformers.
+    "sentence-transformers>=3.0",
     "pypdf>=5.0",
     "python-docx>=1.1",
     # REST API сервера + HTTP-клиент локальной админки.

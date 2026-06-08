@@ -56,12 +56,6 @@ def build_index_service(settings: Settings | None = None, ensure: bool = True) -
         separator_mode=settings.chunk_separator_mode,
     )
 
-    def _reranker_factory():
-        # Ленивая загрузка: модель реранкера грузится только при первом включённом поиске.
-        from ..embedding.reranker import FlagRerankerProvider
-
-        return FlagRerankerProvider(eff.rerank_model)
-
     if ensure:
         qdrant.ensure_collection()
     return IndexService(
@@ -73,7 +67,6 @@ def build_index_service(settings: Settings | None = None, ensure: bool = True) -
         recency_weight=settings.recency_weight,
         recency_halflife_days=settings.recency_halflife_days,
         settings_store=store,
-        reranker_factory=_reranker_factory,
         base_settings=settings,
         upsert_batch_size=settings.upsert_batch_size,
     )

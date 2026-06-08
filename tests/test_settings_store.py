@@ -18,15 +18,17 @@ def make_store(tmp_path):
 def test_get_none_when_not_set(tmp_path):
     store = make_store(tmp_path)
     assert store.get("search_parent_fanout") is None
-    assert store.get("rerank_enabled") is None
+    assert store.get("embedding_quantize") is None
 
 
 def test_set_and_typed_get(tmp_path):
     store = make_store(tmp_path)
-    store.set_many({"search_parent_fanout": "7", "recency_weight": "0.5", "rerank_enabled": "true"})
+    store.set_many(
+        {"search_parent_fanout": "7", "recency_weight": "0.5", "embedding_quantize": "true"}
+    )
     assert store.get("search_parent_fanout") == 7  # int
     assert store.get("recency_weight") == 0.5  # float
-    assert store.get("rerank_enabled") is True  # bool
+    assert store.get("embedding_quantize") is True  # bool
 
     # Перечитать из БД (новый стор) — значения сохранились.
     store2 = SettingsStore(store.engine)

@@ -117,13 +117,12 @@ def test_settings_post_updates_index():
     c = TestClient(create_app(idx))
     r = c.post(
         "/settings",
-        data={"search_parent_fanout": "7", "rerank_enabled": "on"},
+        data={"search_parent_fanout": "7", "embedding_quantize": "on"},
         follow_redirects=False,
     )
     assert r.status_code == 303
     assert idx.updated_settings["search_parent_fanout"] == "7"
-    assert idx.updated_settings["rerank_enabled"] == "true"  # чекбокс отмечен
-    assert idx.updated_settings["embedding_quantize"] == "false"  # bool не отмечен -> false
+    assert idx.updated_settings["embedding_quantize"] == "true"  # чекбокс отмечен
 
 
 def test_dashboard_has_chunk_sections():

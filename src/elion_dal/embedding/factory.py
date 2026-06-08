@@ -9,6 +9,14 @@ from .base import EmbeddingProvider
 def build_provider(settings: Settings) -> EmbeddingProvider:
     backend = settings.embedding_backend.lower()
     model = settings.embedding_model.strip()
+    if backend == "st-bm25":
+        # Рекомендуемый прод-конфиг: dense USER-bge-m3 (sentence-transformers) + BM25 sparse.
+        from .st_bm25_provider import StBm25Provider
+
+        kwargs = {"dim": settings.embedding_dim, "quantize": settings.embedding_quantize}
+        if model:
+            kwargs["dense_model"] = model
+        return StBm25Provider(**kwargs)
     if backend == "fastembed":
         from .fastembed_provider import FastEmbedProvider
 

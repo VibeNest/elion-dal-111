@@ -58,19 +58,22 @@ class Settings(BaseSettings):
     auto_migrate: bool = True
 
     # Эмбеддинги
-    # fastembed -> ONNX multilingual-e5 (быстро на CPU); flag -> настоящий BGE-M3 (вариант A).
-    embedding_backend: str = "fastembed"  # fastembed | flag
-    # Пусто => дефолтная модель бэкенда (fastembed: multilingual-e5-large; flag: BAAI/bge-m3).
-    embedding_model: str = ""
+    # st-bm25 -> рекомендуемый прод-конфиг: dense USER-bge-m3 (sentence-transformers) + BM25 sparse
+    #            (по исследованию leaderboard: hybrid USER-bge-m3+BM25 -> Recall@5 0.98).
+    # fastembed -> ONNX multilingual-e5 + BM25 (легче/быстрее на CPU, R@5 0.92);
+    # flag      -> настоящий BGE-M3 (dense + learned sparse).
+    embedding_backend: str = "st-bm25"  # st-bm25 | fastembed | flag
+    # Пусто => дефолтная модель бэкенда. Для st-bm25 dense — deepvk/USER-bge-m3.
+    embedding_model: str = "deepvk/USER-bge-m3"
     embedding_dim: int = 1024
     # int8-квантизация эмбеддинг-модели. ВНИМАНИЕ: для flag/BGE-M3 это torch dynamic
     # int8, и по замерам RSS он НЕ снижается (а ~удваивается из-за fp32-копии на пике) —
     # см. ADR-004. Поэтому default OFF. Реальное снижение RAM даёт int8 ONNX-экспорт.
     embedding_quantize: bool = False
 
-    # Чанкинг
-    chunk_tokens: int = 400
-    chunk_overlap: int = 64
+    # Чанкинг (рекомендуемый конфиг по исследованию: recursive 1024/102, structured-сепараторы).
+    chunk_tokens: int = 1024
+    chunk_overlap: int = 102  # ~10% от 1024
     # Мин. размер чанка в токенах. 0 = выкл. >0 => чанки короче дропаются при индексации
     # (фильтр мусора: заголовки-сироты, хвосты-обрезки). Меняет состав индекса — см. Chunker.
     chunk_min_tokens: int = 0
@@ -86,10 +89,6 @@ class Settings(BaseSettings):
     search_prefetch: int = 20
     # Во сколько раз больше детей тянуть, чтобы схлопнуть в top_k уникальных родителей.
     search_parent_fanout: int = 5
-
-    # Реранкер (опционально; требует .[flag] и грузит модель ~600 МБ).
-    rerank_enabled: bool = False
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"
 
     # Приоритет свежести: множитель к скору по дате. 0 = выключено (поведение по умолчанию).
     recency_weight: float = 0.0

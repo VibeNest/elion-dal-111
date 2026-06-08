@@ -99,9 +99,9 @@ Qdrant-сервере + Postgres, embedded-режим — для dev/CI без D
 | `ListSources` / `GetStats` | админ-статистика: источники с датами синхронизации и объёмами |
 | `HealthCheck` | живость + доступность Qdrant/Postgres |
 
-**Ранжирование:** hybrid (RRF) → опциональный реранкер (`RERANK_ENABLED`, cross-encoder, default off)
-→ опциональный recency-boost (`RECENCY_WEIGHT`, приоритет свежих дат) → Топ-k. `dense_score` —
-сырой cosine лучшего ребёнка, сигнал уверенности для fallback на стороне RAG-ядра.
+**Ранжирование:** hybrid (RRF: dense ⊕ BM25) → опциональный recency-boost (`RECENCY_WEIGHT`,
+приоритет свежих дат) → Топ-k. `dense_score` — сырой cosine лучшего ребёнка, сигнал уверенности
+для fallback на стороне RAG-ядра.
 
 Проверка через `grpcurl` (включена reflection):
 ```bash

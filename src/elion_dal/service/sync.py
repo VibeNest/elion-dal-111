@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..chunking.chunker import Chunker
 from ..embedding.base import EmbeddingProvider
-from ..embedding.reranker import Reranker
 from ..store.models import chunk_id, parent_pk
 from ..store.pg_repo import DocInput, ParentBuild, PgRepo, SourceStats, StoreStats, sha256
 from ..store.qdrant_repo import PointInput, QdrantRepo
@@ -75,11 +73,9 @@ class IndexService:
         provider: EmbeddingProvider,
         chunker: Chunker,
         parent_fanout: int = 5,
-        reranker: Reranker | None = None,
         recency_weight: float = 0.0,
         recency_halflife_days: float = 365.0,
         settings_store: SettingsStore | None = None,
-        reranker_factory: Callable[[], Reranker] | None = None,
         base_settings=None,
         upsert_batch_size: int = 256,
     ) -> None:
@@ -90,13 +86,10 @@ class IndexService:
         self.settings_store = settings_store
         self._base = base_settings
         self.upsert_batch_size = max(1, upsert_batch_size)
-        self._reranker = reranker
-        self._reranker_factory = reranker_factory
         # Фолбэк-дефолты, если нет store/base (например, в тестах).
         self._d_parent_fanout = max(1, parent_fanout)
         self._d_recency_weight = recency_weight
         self._d_recency_halflife = max(1.0, recency_halflife_days)
-        self._d_rerank_enabled = reranker is not None
 
     # --- живые настройки: override из БД -> .env -> фолбэк ---
     def _cfg(self, key: str, fallback):
@@ -122,9 +115,6 @@ class IndexService:
             max(1.0, float(self._cfg("recency_halflife_days", self._d_recency_halflife))),
         )
 
-    def _live_rerank_enabled(self) -> bool:
-        return bool(self._cfg("rerank_enabled", self._d_rerank_enabled))
-
     def _live_top_k(self) -> int:
         return max(1, int(self._cfg("search_top_k", getattr(self._base, "search_top_k", 3) or 3)))
 
@@ -144,15 +134,6 @@ class IndexService:
         self.chunker.separator_mode = str(
             self._cfg("chunk_separator_mode", getattr(self.chunker, "separator_mode", "structured"))
         )
-
-    def _get_reranker(self) -> Reranker | None:
-        if self._reranker is None and self._reranker_factory is not None:
-            try:
-                self._reranker = self._reranker_factory()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Не удалось загрузить реранкер: %s", e)
-                self._reranker_factory = None
-        return self._reranker
 
     @staticmethod
     def _recency_mult(published_ts: int, weight: float, halflife: float) -> float:
@@ -369,15 +350,8 @@ class IndexService:
                 )
             )
 
-        # Ранжирование: hybrid (RRF) -> опц. реранкер -> опц. recency -> top_k.
+        # Ранжирование: hybrid (RRF) -> опц. recency -> top_k.
         rescored = False
-        if self._live_rerank_enabled():
-            reranker = self._get_reranker()
-            if reranker is not None:
-                scores = reranker.rerank(query, [c.text for c in candidates])
-                for c, s in zip(candidates, scores, strict=True):
-                    c.score = s
-                rescored = True
         weight, halflife = self._live_recency()
         if weight > 0:
             for c in candidates:
