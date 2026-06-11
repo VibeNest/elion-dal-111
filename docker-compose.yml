@@ -39,9 +39,12 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       PG_DSN: postgresql+psycopg://elion:elion@postgres:5432/elion
-      # На проде образ без torch -> бэкенд fastembed (e5-large, ONNX). flag/BGE-M3
-      # потребует тяжёлого образа с .[flag].
-      EMBEDDING_BACKEND: fastembed
+      # Рекомендуемый конфиг (тяжёлый образ с torch): dense USER-bge-m3 + BM25 sparse.
+      # Лёгкий вариант — EMBEDDING_BACKEND=fastembed (e5-large, ONNX, без torch).
+      EMBEDDING_BACKEND: st-bm25
+      EMBEDDING_MODEL: deepvk/USER-bge-m3
+      # Кэш HF-моделей на томе — чтобы USER-bge-m3 (~2 ГБ) не качался при каждом пересоздании.
+      HF_HOME: /models
       AUTO_MIGRATE: "true"
       # REST API + /healthz слушают на ADMIN_HOST:ADMIN_PORT.
       ADMIN_HOST: 0.0.0.0
@@ -50,6 +53,8 @@ services:
       API_TOKEN: ${API_TOKEN:-}
     ports:
       - "8080:8080"     # REST API + /healthz
+    volumes:
+      - hf_models:/models   # кэш HF-моделей (USER-bge-m3) между пересозданиями контейнера
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).status==200 else 1)\""]
       interval: 15s
@@ -60,3 +65,4 @@ services:
 volumes:
   qdrant_storage:
   pgdata:
+  hf_models:
