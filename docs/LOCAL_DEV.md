@@ -64,6 +64,5 @@ DAL на своей машине без Docker: SQLite вместо Postgres, em
 ---
 
 ## Отложено (не блокеры)
-- **Durability Qdrant** (защита storage от порчи) — позже, на серверах заказчика.
-- **Косметика по запросу смежников** — `published_ts` в выдаче, warm-up первого запроса, счётчик точек в `/stats`.
-- **semantic-чанкинг** — заглушка; по бенчу победил recursive, доделывать смысла нет.
+Durability Qdrant · косметика (`published_ts`, warm-up, счётчик точек в `/stats`) · semantic-чанкинг.
+Проблемы и варианты решения по каждому — **[`docs/DEFERRED.md`](DEFERRED.md)**.
