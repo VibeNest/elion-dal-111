@@ -209,7 +209,8 @@ class QdrantRepo:
             "delete_by_source",
         )
 
-    def _filter(self, source_ids: Sequence[str], min_published_ts: int) -> models.Filter | None:
+    def _filter(self, source_ids: Sequence[str], min_published_ts: int, academic_year: int | None = None,
+    is_active: bool | None = None,) -> models.Filter | None:
         must: list = []
         if source_ids:
             must.append(
@@ -218,6 +219,14 @@ class QdrantRepo:
         if min_published_ts > 0:
             must.append(
                 models.FieldCondition(key="published_ts", range=models.Range(gte=min_published_ts))
+            )
+        if academic_year is not None:
+            must.append(
+            models.FieldCondition(key="academic_year", match=models.MatchValue(value=academic_year))
+        )
+        if is_active is not None:
+            must.append(
+                models.FieldCondition(key="is_active", match=models.MatchValue(value=is_active))
             )
         return models.Filter(must=must) if must else None
 
@@ -228,11 +237,14 @@ class QdrantRepo:
         source_ids: Sequence[str] = (),
         min_published_ts: int = 0,
         prefetch_limit: int | None = None,
+        academic_year: int | None = None,
+        is_active: bool | None = None,
     ) -> list[SearchHit]:
         """Гибридный поиск по детям. `limit` — сколько дочерних попаданий вернуть
         (sync схлопнёт их в уникальных родителей). `prefetch_limit` переопределяет
         число кандидатов на ветку (живая настройка)."""
-        qfilter = self._filter(source_ids, min_published_ts)
+        qfilter = self._filter(source_ids, min_published_ts, academic_year=academic_year,
+    is_active=is_active,)
         pf = prefetch_limit or self.prefetch
         result = self._retry(
             lambda: self.client.query_points(

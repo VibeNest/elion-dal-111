@@ -227,6 +227,8 @@ class IndexService:
                             heading_path=p.heading_path,
                             published_ts=doc.published_ts,
                             lang=doc.lang,
+                            academic_year=getattr(doc, "academic_year", None),
+                            is_active=getattr(doc, "is_active", None),
                         ),
                     )
                     for (p, c), emb in zip(window, embeddings, strict=True)
@@ -272,6 +274,8 @@ class IndexService:
         heading_path: list[str],
         published_ts: int,
         lang: str,
+        academic_year: int | None = None,
+        is_active: bool | None = None,
     ) -> dict:
         """Единая схема payload точки Qdrant (для индексации и reindex)."""
         return {
@@ -285,6 +289,8 @@ class IndexService:
             "text": text,
             "published_ts": published_ts,
             "lang": lang,
+            "academic_year": academic_year if academic_year is not None else 0,
+            "is_active": is_active if is_active is not None else True,
         }
 
     def _rollback_partial(self, doc_id: str) -> bool:
@@ -301,7 +307,7 @@ class IndexService:
             return False
 
     def search(
-        self, query: str, top_k: int, source_ids: list[str], min_published_ts: int
+        self, query: str, top_k: int, source_ids: list[str], min_published_ts: int, academic_year: int | None = None, is_active: bool | None = None,
     ) -> list[ParentHit]:
         embedding = self.provider.embed_query(query)
         limit = top_k * self._live_parent_fanout()
@@ -311,6 +317,8 @@ class IndexService:
             source_ids=source_ids,
             min_published_ts=min_published_ts,
             prefetch_limit=self._live_prefetch(),
+            academic_year=academic_year,
+            is_active=is_active,
         )
 
         # Схлопываем детей в уникальных родителей-кандидатов (порядок RRF сохраняем).
@@ -413,6 +421,8 @@ class IndexService:
                                     heading_path=par.heading_path if par else [],
                                     published_ts=row.published_ts,
                                     lang=row.lang,
+                                    academic_year=getattr(row, "academic_year", None),
+                                    is_active=getattr(row, "is_active", None),
                                 ),
                             )
                         )

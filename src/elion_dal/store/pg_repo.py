@@ -41,7 +41,8 @@ class DocInput:
     content_hash: str
     index_in_rag: bool
     sections: list[SectionInput] = field(default_factory=list)
-
+    academic_year: int | None = None
+    is_active: bool | None = None
 
 @dataclass(slots=True)
 class ParentBuild:
