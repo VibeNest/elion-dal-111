@@ -7,7 +7,7 @@ os.environ["QDRANT_URL"] = "./qdrant_local"
 
 from elion_dal.service.bootstrap import build_index_service
 from elion_dal.service.sync import UpsertCounts
-from elion_dal.store.pg_repo import DocInput, SectionInput, PgRepo
+from elion_dal.store.pg_repo import DocInput, PgRepo, SectionInput
 
 
 def ensure_db():
