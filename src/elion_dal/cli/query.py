@@ -3,6 +3,9 @@
 Запуск:
     python -m elion_dal.cli.query "когда олимпиада Физтех по биологии"
     python -m elion_dal.cli.query "налоговый вычет справка" --top-k 5
+    python -m elion_dal.cli.query "поступление" --mode chunk   # только чанк (по умолчанию)
+    python -m elion_dal.cli.query "поступление" --mode parent  # только родитель
+    python -m elion_dal.cli.query "поступление" --mode both    # и чанк, и родитель
 """
 
 from __future__ import annotations
@@ -21,6 +24,10 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--source", action="append", default=[], help="фильтр по source_id (можно несколько)"
+    )
+    parser.add_argument(
+        "--mode", choices=["chunk", "parent", "both"], default="chunk",
+        help="что показывать: чанк, родителя или оба (по умолчанию: chunk)"
     )
     args = parser.parse_args(argv[1:])
 
@@ -48,7 +55,16 @@ def main(argv: list[str]) -> int:
         if crumbs:
             print(f"    раздел: {crumbs}")
         print(f"    нашли по: {clip(h.matched_child, 160)}")
-        print(f"    родитель: {clip(h.text, 400)}\n")
+
+        # Вывод в зависимости от режима
+        if args.mode == "chunk":
+            print(f"    чанк: {clip(h.text, 400)}")
+        elif args.mode == "parent":
+            print(f"    родитель: {clip(h.text, 400)}")
+        else:  # both
+            print(f"    чанк: {clip(h.text, 400)}")
+            print(f"    родитель: {clip(h.text, 400)}")
+        print()
     return 0
 
 
