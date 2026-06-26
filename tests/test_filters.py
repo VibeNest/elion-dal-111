@@ -21,7 +21,7 @@ def test_academic_year_filter():
     """Test filtering by academic year."""
     print("\n=== Test: filtering by academic_year ===")
     ensure_db()
-    index = build_index_service(ensure=False)
+    index = build_index_service(ensure=True)
     doc_id = "test_filter_2026"
 
     try:
@@ -93,7 +93,7 @@ def test_is_active_filter():
     """Test filtering by active status."""
     print("\n=== Test: filtering by is_active ===")
     ensure_db()
-    index = build_index_service(ensure=False)
+    index = build_index_service(ensure=True)
     doc_id = "test_filter_inactive"
 
     try:
@@ -165,7 +165,7 @@ def test_none_filter_behavior():
     """Test that None does not apply any filter."""
     print("\n=== Test: None = no filter ===")
     ensure_db()
-    index = build_index_service(ensure=False)
+    index = build_index_service(ensure=True)
     doc_id = "test_filter_none"
 
     try:
