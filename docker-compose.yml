@@ -1,33 +1,31 @@
 services:
   qdrant:
     image: qdrant/qdrant:v1.12.4
-    ports:
-      - "6333:6333"   # REST/HTTP
-      - "6334:6334"   # gRPC
     volumes:
-      - qdrant_storage:/qdrant/storage
+    - qdrant_storage:/qdrant/storage
     healthcheck:
       test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-
+    expose:
+    - "6333"
+    - "6334"
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: elion
       POSTGRES_PASSWORD: elion
       POSTGRES_DB: elion
-    ports:
-      - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+    - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U elion -d elion"]
       interval: 10s
       timeout: 5s
       retries: 5
-
+    expose:
+    - "5432"
   elion-dal:
     build: .
     restart: unless-stopped
@@ -39,30 +37,24 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       PG_DSN: postgresql+psycopg://elion:elion@postgres:5432/elion
-      # Рекомендуемый конфиг (тяжёлый образ с torch): dense USER-bge-m3 + BM25 sparse.
-      # Лёгкий вариант — EMBEDDING_BACKEND=fastembed (e5-large, ONNX, без torch).
       EMBEDDING_BACKEND: st-bm25
       EMBEDDING_MODEL: deepvk/USER-bge-m3
-      # Кэш HF-моделей на томе — чтобы USER-bge-m3 (~2 ГБ) не качался при каждом пересоздании.
       HF_HOME: /models
       AUTO_MIGRATE: "true"
-      # REST API + /healthz слушают на ADMIN_HOST:ADMIN_PORT.
       ADMIN_HOST: 0.0.0.0
       ADMIN_PORT: "8080"
-      # Bearer-токен для всех ручек кроме /healthz. Пусто => проверка выключена.
       API_TOKEN: ${API_TOKEN:-}
-    ports:
-      - "8080:8080"     # REST API + /healthz
     volumes:
-      - hf_models:/models   # кэш HF-моделей (USER-bge-m3) между пересозданиями контейнера
+    - hf_models:/models
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).status==200 else 1)\""]
       interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 600s   # первый старт качает модель ~2 ГБ
-
+      start_period: 600s
+    expose:
+    - "8080"
 volumes:
-  qdrant_storage:
-  pgdata:
+  qdrant_storage: 
+  pgdata: 
   hf_models:
